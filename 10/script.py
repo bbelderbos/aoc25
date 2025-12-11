@@ -1,13 +1,13 @@
 # /// script
 # dependencies = [
-#   "PuLP",
+#   "z3-solver",
 # ]
 # ///
 import argparse
 from itertools import combinations
 from pathlib import Path
 
-import pulp  # type: ignore
+import z3  # type: ignore
 
 
 def solve_machine(machine: str) -> int:
@@ -35,43 +35,27 @@ def solve_part1(data: str) -> int:
     return sum(solve_machine(machine) for machine in data.splitlines())
 
 
-def build_A(buttons: list[tuple[int, ...]], target: list[int]) -> list[list[int]]:
-    L, B = len(target), len(buttons)
-    A = [[0] * B for _ in range(L)]
-    for j, btn in enumerate(buttons):
-        for i in btn:
-            A[i][j] = 1
-    return A
-
-
 def min_presses_ilp(machine: str) -> int:
     lights, *tokens, target_str = machine.split()
 
     buttons = [tuple(map(int, t.strip("()").split(","))) for t in tokens]
     target = list(map(int, target_str.strip("{}").split(",")))
+    o = z3.Optimize()  # optimization context
 
-    A = build_A(buttons, target)
-    L, B = len(target), len(buttons)
+    vars = z3.Ints(f"n{i}" for i in range(len(buttons)))
+    for var in vars:
+        o.add(var >= 0)  # x_j ≥ 0
 
-    prob = pulp.LpProblem("machine", pulp.LpMinimize)
+    for i, joltage in enumerate(target):  # one constraint per counter i
+        equation = 0
+        for b, button in enumerate(buttons):
+            if i in button:  # button b touches counter i
+                equation += vars[b]  # add x_b to this counter
+        o.add(equation == joltage)  # A[i]·x == target[i]
 
-    # integer vars x_j >= 0
-    x = [pulp.LpVariable(f"x_{j}", lowBound=0, cat="Integer") for j in range(B)]
-
-    # objective: min sum_j x_j
-    prob += pulp.lpSum(x)
-
-    # constraints: for each counter i, sum_j A[i][j] * x_j == target[i]
-    for i in range(L):
-        prob += pulp.lpSum(A[i][j] * x[j] for j in range(B)) == target[i]
-
-    # solve
-    prob.solve(pulp.PULP_CBC_CMD(msg=False))
-
-    if pulp.LpStatus[prob.status] != "Optimal":
-        raise ValueError("No optimal ILP solution")
-
-    return int(sum(v.value() for v in x))
+    o.minimize(sum(vars))  # minimize total presses
+    o.check()
+    return o.model().eval(sum(vars)).as_long()
 
 
 def solve_part2(data: str) -> int:
